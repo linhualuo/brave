@@ -48,14 +48,12 @@ final class TracingRoutingContextHandler implements Handler<RoutingContext> {
   };
 
   final Tracer tracer;
-  final ThreadLocal<Route> currentRoute;
   final HttpServerHandler<HttpServerRequest, HttpServerResponse> serverHandler;
   final TraceContext.Extractor<HttpServerRequest> extractor;
 
   TracingRoutingContextHandler(HttpTracing httpTracing) {
     tracer = httpTracing.tracing().tracer();
-    currentRoute = new ThreadLocal<>();
-    serverHandler = HttpServerHandler.create(httpTracing, new Adapter(currentRoute));
+    serverHandler = HttpServerHandler.create(httpTracing, new Adapter());
     extractor = httpTracing.tracing().propagation().extractor(GETTER);
   }
 
@@ -91,35 +89,19 @@ final class TracingRoutingContextHandler implements Handler<RoutingContext> {
 
     @Override public void handle(Void aVoid) {
       if (!finished.compareAndSet(false, true)) return;
-      Route route = new Route(context.request().rawMethod(), context.currentRoute().getPath());
+      String[] methodAndPath = getMethodAndPath();
+      methodAndPath[0] = context.request().rawMethod();
+      methodAndPath[1] = context.currentRoute().getPath();
       try {
-        currentRoute.set(route);
         serverHandler.handleSend(context.response(), context.failure(), span);
       } finally {
-        currentRoute.remove();
+        methodAndPath[0] = null;
+        methodAndPath[1] = null;
       }
     }
   }
 
-  static final class Route {
-    final String method, path;
-
-    Route(String method, String path) {
-      this.method = method;
-      this.path = path;
-    }
-
-    @Override public String toString() {
-      return "Route{method=" + method + ", path=" + path + "}";
-    }
-  }
-
   static final class Adapter extends HttpServerAdapter<HttpServerRequest, HttpServerResponse> {
-    final ThreadLocal<Route> currentRoute;
-
-    Adapter(ThreadLocal<Route> currentRoute) {
-      this.currentRoute = currentRoute;
-    }
 
     @Override public String method(HttpServerRequest request) {
       return request.rawMethod();
@@ -138,11 +120,11 @@ final class TracingRoutingContextHandler implements Handler<RoutingContext> {
     }
 
     @Override public String methodFromResponse(HttpServerResponse response) {
-      return currentRoute.get().method;
+      return getMethodAndPath()[0];
     }
 
     @Override public String route(HttpServerResponse response) {
-      String result = currentRoute.get().path;
+      String result = getMethodAndPath()[1];
       return result != null ? result : "";
     }
 
@@ -163,5 +145,20 @@ final class TracingRoutingContextHandler implements Handler<RoutingContext> {
       SocketAddress addr = req.remoteAddress();
       return span.remoteIpAndPort(addr.host(), addr.port());
     }
+  }
+
+  /**
+   * This uses a string array to avoid leaking a Brave type onto a thread local. If we used a Brave
+   * type, it would prevent unloading Brave classes.
+   */
+  static final ThreadLocal<String[]> METHOD_AND_PATH = new ThreadLocal<>();
+
+  static String[] getMethodAndPath() {
+    String[] methodAndPath = METHOD_AND_PATH.get();
+    if (methodAndPath == null) {
+      methodAndPath = new String[2];
+      METHOD_AND_PATH.set(methodAndPath);
+    }
+    return methodAndPath;
   }
 }

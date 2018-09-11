@@ -1,7 +1,6 @@
 package brave.vertx.web;
 
 import brave.vertx.web.TracingRoutingContextHandler.Adapter;
-import brave.vertx.web.TracingRoutingContextHandler.Route;
 import io.vertx.core.http.HttpServerResponse;
 import java.lang.reflect.Proxy;
 import org.junit.After;
@@ -10,17 +9,16 @@ import org.junit.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class TracingRoutingContextHandlerAdapterTest {
-  ThreadLocal<Route> currentRoute = new ThreadLocal<>();
-  Adapter adapter = new Adapter(currentRoute);
+  Adapter adapter = new Adapter();
 
   @After public void clear() {
-    currentRoute.remove();
+    TracingRoutingContextHandler.METHOD_AND_PATH.remove();
   }
 
   @Test public void methodFromResponse() {
     HttpServerResponse response = dummyResponse();
 
-    currentRoute.set(new Route("GET", null));
+    TracingRoutingContextHandler.getMethodAndPath()[0] = "GET";
     assertThat(adapter.methodFromResponse(response))
         .isEqualTo("GET");
   }
@@ -28,14 +26,16 @@ public class TracingRoutingContextHandlerAdapterTest {
   @Test public void route_emptyByDefault() {
     HttpServerResponse response = dummyResponse();
 
-    currentRoute.set(new Route("GET", null));
+    TracingRoutingContextHandler.getMethodAndPath()[0] = "GET";
     assertThat(adapter.route(response)).isEmpty();
   }
 
   @Test public void route() {
     HttpServerResponse response = dummyResponse();
 
-    currentRoute.set(new Route("GET", "/users/:userID"));
+    TracingRoutingContextHandler.getMethodAndPath()[0] = "GET";
+    TracingRoutingContextHandler.getMethodAndPath()[1] = "/users/:userID";
+
     assertThat(adapter.route(response))
         .isEqualTo("/users/:userID");
   }
